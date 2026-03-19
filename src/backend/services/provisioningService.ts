@@ -61,7 +61,51 @@ export const provisionTictoPurchase = async (customerData: any, tictoProductId: 
     const expirationDate = new Date();
     expirationDate.setDate(expirationDate.getDate() + accessDays);
 
-    // 2. Verificar se o e-mail do cliente já existe
+    // 2. Preparar array de acessos (Flattening)
+    const accessesToGrant: any[] = [];
+
+    // Inserir o Produto (Combo)
+    const productAccess = {
+      id: crypto.randomUUID(),
+      type: 'product',
+      targetId: productDoc.id,
+      tictoId: safeProductId,
+      title: productData.name,
+      days: accessDays,
+      startDate: Timestamp.now(),
+      endDate: Timestamp.fromDate(expirationDate),
+      isActive: true,
+      resources: linkedResources
+    };
+    accessesToGrant.push(productAccess);
+
+    // Inserir Recursos Vinculados Individualmente (Achatamento)
+    let resourcesArray: any[] = [];
+    if (Array.isArray(linkedResources)) {
+      resourcesArray = linkedResources;
+    } else if (linkedResources && typeof linkedResources === 'object') {
+      if (linkedResources.plans) linkedResources.plans.forEach((id: any) => resourcesArray.push({ id, type: 'plan' }));
+      if (linkedResources.onlineCourses) linkedResources.onlineCourses.forEach((id: any) => resourcesArray.push({ id, type: 'course' }));
+      if (linkedResources.simulated) linkedResources.simulated.forEach((id: any) => resourcesArray.push({ id, type: 'simulated' }));
+      if (linkedResources.presentialClasses) linkedResources.presentialClasses.forEach((id: any) => resourcesArray.push({ id, type: 'presential' }));
+    }
+
+    resourcesArray.forEach((res: any) => {
+      const idField = res.type ? `${res.type}Id` : 'resourceId';
+      accessesToGrant.push({
+        id: crypto.randomUUID(),
+        type: res.type || 'unknown',
+        [idField]: res.id,
+        resourceId: res.id,
+        tictoId: safeProductId, // Adicionado para permitir revogação vinculada
+        name: res.name || res.title || 'Recurso Vinculado',
+        isActive: true,
+        startDate: Timestamp.now(),
+        endDate: Timestamp.fromDate(expirationDate)
+      });
+    });
+
+    // 3. Verificar se o e-mail do cliente já existe
     let userRecord;
     let isNewUser = false;
 
@@ -103,34 +147,8 @@ export const provisionTictoPurchase = async (customerData: any, tictoProductId: 
         role: 'student',
         status: 'active',
         createdAt: FieldValue.serverTimestamp(),
-        access: [
-          {
-            id: crypto.randomUUID(),
-            type: 'product',
-            targetId: productDoc.id,
-            tictoId: safeProductId,
-            title: productData.name,
-            days: accessDays,
-            startDate: Timestamp.now(),
-            endDate: Timestamp.fromDate(expirationDate),
-            isActive: true,
-            resources: linkedResources
-          }
-        ],
-        products: [
-          {
-            id: crypto.randomUUID(),
-            type: 'product',
-            targetId: productDoc.id,
-            tictoId: safeProductId,
-            title: productData.name,
-            days: accessDays,
-            startDate: Timestamp.now(),
-            endDate: Timestamp.fromDate(expirationDate),
-            isActive: true,
-            resources: linkedResources
-          }
-        ]
+        access: accessesToGrant,
+        products: accessesToGrant.filter(a => a.type === 'product')
       };
 
       await dbAdmin.collection('users').doc(userRecord.uid).set(newUserDoc);
@@ -153,34 +171,8 @@ export const provisionTictoPurchase = async (customerData: any, tictoProductId: 
           role: 'student',
           status: 'active',
           createdAt: FieldValue.serverTimestamp(),
-          access: [
-            {
-              id: crypto.randomUUID(),
-              type: 'product',
-              targetId: productDoc.id,
-              tictoId: safeProductId,
-              title: productData.name,
-              days: accessDays,
-              startDate: Timestamp.now(),
-              endDate: Timestamp.fromDate(expirationDate),
-              isActive: true,
-              resources: linkedResources
-            }
-          ],
-          products: [
-            {
-              id: crypto.randomUUID(),
-              type: 'product',
-              targetId: productDoc.id,
-              tictoId: safeProductId,
-              title: productData.name,
-              days: accessDays,
-              startDate: Timestamp.now(),
-              endDate: Timestamp.fromDate(expirationDate),
-              isActive: true,
-              resources: linkedResources
-            }
-          ]
+          access: accessesToGrant,
+          products: accessesToGrant.filter(a => a.type === 'product')
         };
         await userRef.set(newUserDoc);
       } else {
@@ -196,23 +188,10 @@ export const provisionTictoPurchase = async (customerData: any, tictoProductId: 
         );
 
         if (!hasActiveAccess) {
-          const newAccess = {
-            id: crypto.randomUUID(),
-            type: 'product',
-            targetId: productDoc.id,
-            tictoId: safeProductId,
-            title: productData.name,
-            days: accessDays,
-            startDate: Timestamp.now(),
-            endDate: Timestamp.fromDate(expirationDate),
-            isActive: true,
-            resources: linkedResources
-          };
-
           await userRef.update({
             status: 'active',
-            access: FieldValue.arrayUnion(newAccess),
-            products: FieldValue.arrayUnion(newAccess)
+            access: FieldValue.arrayUnion(...accessesToGrant),
+            products: FieldValue.arrayUnion(...accessesToGrant.filter(a => a.type === 'product'))
           });
           console.log(`[PROVISIONAMENTO] Novos acessos adicionados para o usuário existente ${customerData.email}`);
         } else {
